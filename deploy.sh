@@ -24,6 +24,10 @@ else
   exit 1
 fi
 
+# Strip surrounding quotes from SSH and REMOTE_DIR if they exist
+SSH=$(echo "${SSH:-}" | sed -e 's/^"//' -e 's/"$//')
+REMOTE_DIR=$(echo "${REMOTE_DIR:-}" | sed -e 's/^"//' -e 's/"$//')
+
 # Verify required deployment variables
 if [ -z "${SSH:-}" ]; then
   echo "Error: SSH environment variable is not set in .env" >&2
@@ -69,10 +73,12 @@ fi
 # SSH is "ssh -p 65002 u554613359@92.249.46.170"
 # We extract the user@host part (the last argument of SSH command)
 SSH_HOST=$(echo "$SSH" | awk '{print $NF}')
+# Extract the transport part (everything except the last argument) for rsync -e
+RSYNC_SSH=$(echo "$SSH" | sed 's/ [^ ]*$//')
 
 echo ">>> Deploying Frontend assets to root..."
 # Sync frontend/dist/ to remote root using the custom SSH command for transport
-rsync -avz -e "$SSH" --delete "$CODE_DIR/frontend/dist/" "$SSH_HOST:$REMOTE_DIR/"
+rsync -avz -e "$RSYNC_SSH" --delete "$CODE_DIR/frontend/dist/" "$SSH_HOST:$REMOTE_DIR/"
 
 echo ">>> Preparing remote API folder..."
 # Create the api folder on the remote server
@@ -80,7 +86,7 @@ $SSH "mkdir -p $REMOTE_DIR/api"
 
 echo ">>> Deploying Backend source to /api..."
 # Sync backend/ to remote api/ folder, excluding vendor dependencies and local logs/caches
-rsync -avz -e "$SSH" \
+rsync -avz -e "$RSYNC_SSH" \
   --exclude 'vendor/' \
   --exclude 'logs/*.log' \
   --exclude '.git' \
