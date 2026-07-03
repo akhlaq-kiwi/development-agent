@@ -54,6 +54,17 @@ echo "============================================="
 echo "Press Ctrl+C to terminate the daemon cleanly."
 echo ""
 
+# Countdown timer function
+countdown() {
+  local seconds=$1
+  while [ $seconds -gt 0 ]; do
+    printf "\r[$(date +'%H:%M:%S')] Sleeping... %02d:%02d remaining " $((seconds / 60)) $((seconds % 60))
+    sleep 1
+    seconds=$((seconds - 1))
+  done
+  printf "\r[$(date +'%H:%M:%S')] Starting next run...                       \n"
+}
+
 while true; do
   echo "[$(date)] Running main_agent.sh..."
   
@@ -68,7 +79,6 @@ while true; do
     echo "[$(date)] Warning: main_agent.sh execution returned non-zero status ($RUN_STATUS)." >&2
   fi
   
-  echo "[$(date)] Cycle complete. Sleeping for $POLL_INTERVAL seconds..."
+  countdown "$POLL_INTERVAL"
   echo "---------------------------------------------"
-  sleep "$POLL_INTERVAL"
 done
