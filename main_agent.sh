@@ -48,6 +48,8 @@ mkdir -p "$REQ_OPEN" "$REQ_IN_PROGRESS" "$REQ_DONE"
 DRY_RUN=false
 BASE_BRANCH="${BASE_BRANCH:-main}"
 LABEL="${ISSUE_LABEL:-antigravity}"
+export CREATE_PR="${CREATE_PR:-true}"
+export DEPLOY_ON_SUCCESS="${DEPLOY_ON_SUCCESS:-true}"
 
 SINGLE_RUN=false
 
@@ -276,17 +278,28 @@ EOF
   fi
 
   if [ $CHANGES_EXIST -eq 0 ]; then
-    echo "Changes detected! Committing and pushing..."
-    "$SCRIPT_DIR/git_manager.sh" commit_and_push "$ISSUE_NUMBER" "$ISSUE_TITLE"
+    if [ "$CREATE_PR" = "true" ]; then
+      echo "Changes detected! Committing and pushing branch..."
+      "$SCRIPT_DIR/git_manager.sh" commit_and_push "$ISSUE_NUMBER" "$ISSUE_TITLE"
 
-    echo "Creating Pull Request..."
-    "$SCRIPT_DIR/git_manager.sh" create_pr "$ISSUE_NUMBER" "$ISSUE_TITLE"
+      echo "Creating Pull Request..."
+      "$SCRIPT_DIR/git_manager.sh" create_pr "$ISSUE_NUMBER" "$ISSUE_TITLE"
+    else
+      echo "Changes detected! Direct merge enabled (CREATE_PR=false). Committing locally and merging to base branch..."
+      "$SCRIPT_DIR/git_manager.sh" commit_local "$ISSUE_NUMBER" "$ISSUE_TITLE"
+      "$SCRIPT_DIR/git_manager.sh" merge_and_push_base "$ISSUE_NUMBER"
+    fi
 
     echo "Removing '$LABEL' label from issue..."
     "$SCRIPT_DIR/git_manager.sh" remove_label "$ISSUE_NUMBER"
 
     # Run deployment tasks
-    "$SCRIPT_DIR/deploy.sh"
+    if [ "$DEPLOY_ON_SUCCESS" = "true" ]; then
+      echo "Running deployment script..."
+      "$SCRIPT_DIR/deploy.sh"
+    else
+      echo "Deployment disabled (DEPLOY_ON_SUCCESS=false). Skipping deploy step."
+    fi
   else
     echo "No modifications detected for issue #$ISSUE_NUMBER. Reverting requirement state..."
     if [ -f "$REQ_DONE/$REQ_FILE" ]; then
