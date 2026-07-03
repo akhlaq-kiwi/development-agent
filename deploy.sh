@@ -1,36 +1,103 @@
 #!/usr/bin/env bash
 
-# Deployment module for Antigravity Builder
-# Integrates build, testing, and deployment commands post agent run.
+# deploy.sh - Deployment Script for Antigravity Builder
+# Builds frontend locally and deploys frontend/backend to remote server via SSH/rsync.
 
 set -euo pipefail
 
-# Resolve and switch to project directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET_DIR="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}"
-cd "$TARGET_DIR"
 
-echo "=================================================="
-echo "Starting Build and Deployment Sequence..."
-echo "=================================================="
-
-# Check if there are any specific local build files or commands to run
-# (e.g., npm run build, docker build, etc.)
-if [ -f "package.json" ]; then
-  echo "Node.js project detected. Checking dependencies..."
-  npm install
-  
-  if npm run | grep -q "build"; then
-    echo "Running npm build..."
-    npm run build
-  else
-    echo "No build script found in package.json. Skipping build step."
-  fi
+# Load environment variables from builder/.env
+ENV_PATH="$SCRIPT_DIR/.env"
+if [ -f "$ENV_PATH" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=$(echo "$line" | tr -d '\r')
+    if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]]; then
+      continue
+    fi
+    if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+      export "$line"
+    fi
+  done < "$ENV_PATH"
+else
+  echo "Error: .env configuration file not found at $ENV_PATH" >&2
+  exit 1
 fi
 
-# Placeholder for actual deployment logic.
-# Customize this section to deploy to your hosting/cloud provider of choice (e.g. AWS, GCP, Vercel, Netlify).
-echo "Deploying applications changes..."
-echo "Mocking deployment..."
-echo "✓ Changes deployed successfully!"
+# Verify required deployment variables
+if [ -z "${SSH:-}" ]; then
+  echo "Error: SSH environment variable is not set in .env" >&2
+  exit 1
+fi
+
+if [ -z "${REMOTE_DIR:-}" ]; then
+  echo "Error: REMOTE_DIR environment variable is not set in .env" >&2
+  exit 1
+fi
+
+PROJECT_ROOT="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}"
+CODE_DIR="$PROJECT_ROOT"
+
+echo "=================================================="
+echo " Starting Deploy Script for QA Environment..."
+echo " Target Directory: $REMOTE_DIR"
+echo "=================================================="
+
+# 1. Build Frontend Locally
+echo ">>> Building Frontend..."
+if [ -d "$CODE_DIR/frontend" ]; then
+  cd "$CODE_DIR/frontend"
+  
+  echo "Installing frontend packages..."
+  npm install
+  
+  echo "Configuring production environment for QA..."
+  # Create a production .env file for the frontend compilation pointing to the /api context
+  echo "VITE_API_URL=https://at-qa.shikshapilot.com/api" > .env.production
+  
+  echo "Running Vite production build..."
+  npm run build
+  
+  # Clean up the temporary env file
+  rm -f .env.production
+else
+  echo "Error: Frontend directory not found at $CODE_DIR/frontend" >&2
+  exit 1
+fi
+
+# 2. Extract SSH user and host for rsync
+# SSH is "ssh -p 65002 u554613359@92.249.46.170"
+# We extract the user@host part (the last argument of SSH command)
+SSH_HOST=$(echo "$SSH" | awk '{print $NF}')
+
+echo ">>> Deploying Frontend assets to root..."
+# Sync frontend/dist/ to remote root using the custom SSH command for transport
+rsync -avz -e "$SSH" --delete "$CODE_DIR/frontend/dist/" "$SSH_HOST:$REMOTE_DIR/"
+
+echo ">>> Preparing remote API folder..."
+# Create the api folder on the remote server
+$SSH "mkdir -p $REMOTE_DIR/api"
+
+echo ">>> Deploying Backend source to /api..."
+# Sync backend/ to remote api/ folder, excluding vendor dependencies and local logs/caches
+rsync -avz -e "$SSH" \
+  --exclude 'vendor/' \
+  --exclude 'logs/*.log' \
+  --exclude '.git' \
+  --exclude '.env' \
+  --exclude '.env.*' \
+  --exclude '.phpunit.result.cache' \
+  --exclude '.phpunit.cache/' \
+  "$CODE_DIR/backend/" "$SSH_HOST:$REMOTE_DIR/api/"
+
+echo ">>> Uploading QA Database credentials..."
+# Upload the local .env.qa file to the remote server as the active .env configuration
+cat "$CODE_DIR/.env.qa" | $SSH "cat > $REMOTE_DIR/api/.env"
+
+echo ">>> Running server-side installs and database migrations..."
+# Run Composer install and Phinx migrations on the remote server
+$SSH "cd $REMOTE_DIR/api && composer install --no-dev --optimize-autoloader && php vendor/bin/phinx migrate"
+
+echo "=================================================="
+echo "✓ QA Deployment Completed Successfully!"
 echo "=================================================="
