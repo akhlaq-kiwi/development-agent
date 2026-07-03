@@ -34,8 +34,7 @@ $ISSUE_BODY
 Instructions:
 1. Understand the issue and identify the files that need to be changed or created.
 2. CRITICAL: You must implement all changes and write all new files directly inside the current working directory (the project workspace). Do not create or use folders outside of this project directory.
-3. Write automated tests if applicable, verify they pass, and ensure the build is successful.
-4. Clean up any temporary files you created during the process.
+3. Clean up any temporary files you created during the process.
 
 "
 
