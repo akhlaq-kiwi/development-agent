@@ -43,5 +43,5 @@ Instructions:
 # We use --dangerously-skip-permissions to allow the agent to run automatically without prompting.
 (
   cd "$WORKSPACE_ROOT"
-  agy --dangerously-skip-permissions --add-dir "$WORKSPACE_ROOT" --print "$PROMPT"
+  agy --dangerously-skip-permissions --add-dir "$WORKSPACE_ROOT" --print-timeout "${AGENT_TIMEOUT:-20m}" --print "$PROMPT"
 )
