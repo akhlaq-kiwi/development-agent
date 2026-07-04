@@ -226,6 +226,9 @@ EOF
   # Create and checkout a branch for the issue
   "$SCRIPT_DIR/git_manager.sh" create_branch "$ISSUE_NUMBER"
 
+  # Mark issue as in progress on GitHub
+  "$SCRIPT_DIR/git_manager.sh" mark_in_progress "$ISSUE_NUMBER"
+
   # Move requirement file to "In_progress" state
   if [ -f "$REQ_OPEN/$REQ_FILE" ]; then
     echo "Transitioning requirement file to In_progress..."
@@ -241,18 +244,56 @@ EOF
     )
   fi
 
-  # Run the agent on the issue
-  set +e
-  "$SCRIPT_DIR/run_agent.sh" "$ISSUE_NUMBER" "$ISSUE_TITLE" "$ISSUE_BODY"
-  AGENT_STATUS=$?
-  set -e
+  # Self-healing verification loop
+  VERIFY_MAX_RETRIES=3
+  VERIFY_RETRY=0
+  VERIFY_PASSED=false
+  VERIFY_LOG_FILE="$SCRIPT_DIR/verify_issue_$ISSUE_NUMBER.log"
+  VERIFY_ERRORS=""
 
-  if [ $AGENT_STATUS -ne 0 ]; then
-    echo "Warning: Agent failed (exit code $AGENT_STATUS) on issue #$ISSUE_NUMBER. Reverting state..." >&2
+  while [ $VERIFY_RETRY -lt $VERIFY_MAX_RETRIES ]; do
+    echo "Invoking Antigravity Agent (Attempt $((VERIFY_RETRY + 1)) of $VERIFY_MAX_RETRIES)..."
+    set +e
+    "$SCRIPT_DIR/run_agent.sh" "$ISSUE_NUMBER" "$ISSUE_TITLE" "$ISSUE_BODY" "$VERIFY_ERRORS"
+    AGENT_STATUS=$?
+    set -e
+
+    if [ $AGENT_STATUS -ne 0 ]; then
+      echo "Warning: Agent script exited with code $AGENT_STATUS." >&2
+      break
+    fi
+
+    # Run verification suite
+    echo "Running verification suite..."
+    set +e
+    "$SCRIPT_DIR/verify.sh" > "$VERIFY_LOG_FILE" 2>&1
+    VERIFY_STATUS=$?
+    set -e
+
+    if [ $VERIFY_STATUS -eq 0 ]; then
+      echo "Verification passed successfully on attempt $((VERIFY_RETRY + 1))!"
+      VERIFY_PASSED=true
+      rm -f "$VERIFY_LOG_FILE"
+      break
+    else
+      echo "Verification failed! Extracting logs for self-healing..."
+      cat "$VERIFY_LOG_FILE" >&2
+      # Extract last 100 lines of logs to feed to the agent
+      VERIFY_ERRORS=$(tail -n 100 "$VERIFY_LOG_FILE")
+    fi
+
+    VERIFY_RETRY=$((VERIFY_RETRY + 1))
+  done
+
+  # Handle loop outcome
+  if [ "$VERIFY_PASSED" = "false" ]; then
+    echo "Error: Verification failed after $VERIFY_MAX_RETRIES attempts. Reverting state..." >&2
     # Move back to open
     if [ -f "$REQ_IN_PROGRESS/$REQ_FILE" ]; then
       mv "$REQ_IN_PROGRESS/$REQ_FILE" "$REQ_OPEN/$REQ_FILE"
     fi
+    # Remove 'inprogress' label from GitHub
+    "$SCRIPT_DIR/git_manager.sh" remove_in_progress "$ISSUE_NUMBER"
     # Return to base branch
     "$SCRIPT_DIR/git_manager.sh" checkout_base
     continue
@@ -279,18 +320,18 @@ EOF
 
   if [ $CHANGES_EXIST -eq 0 ]; then
     if [ "$CREATE_PR" = "true" ]; then
-      echo "Changes detected! Committing and pushing branch..."
+      echo "Changes verified! Committing and pushing branch..."
       "$SCRIPT_DIR/git_manager.sh" commit_and_push "$ISSUE_NUMBER" "$ISSUE_TITLE"
 
       echo "Creating Pull Request..."
       "$SCRIPT_DIR/git_manager.sh" create_pr "$ISSUE_NUMBER" "$ISSUE_TITLE"
     else
-      echo "Changes detected! Direct merge enabled (CREATE_PR=false). Committing locally and merging to base branch..."
+      echo "Changes verified! Direct merge enabled (CREATE_PR=false). Committing locally and merging to base branch..."
       "$SCRIPT_DIR/git_manager.sh" commit_local "$ISSUE_NUMBER" "$ISSUE_TITLE"
       "$SCRIPT_DIR/git_manager.sh" merge_and_push_base "$ISSUE_NUMBER"
     fi
 
-    echo "Removing '$LABEL' label from issue..."
+    echo "Updating labels on issue (removing '$LABEL' and 'inprogress', adding 'qa')..."
     "$SCRIPT_DIR/git_manager.sh" remove_label "$ISSUE_NUMBER"
 
     # Run deployment tasks
