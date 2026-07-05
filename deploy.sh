@@ -80,7 +80,7 @@ if [ "$DEPLOY_CODE" = "true" ]; then
     
     echo "Configuring production environment for QA..."
     # Create a production .env file for the frontend compilation pointing to the /api context
-    printf "VITE_API_URL=https://at-qa.shikshapilot.com/api\nVITE_IMAGES_BASE_URL=https://at-qa.shikshapilot.com\nVITE_UPLOADED_FILES_BASE_URL=https://at-qa.shikshapilot.com/api\n" > .env.production
+    printf "VITE_API_URL=https://at-qa.shikshapilot.com/api\nVITE_UPLOADED_BASE_URL=https://at-qa.shikshapilot.com/api/uploads\n" > .env.production
     
     echo "Running Vite production build..."
     npm run build
