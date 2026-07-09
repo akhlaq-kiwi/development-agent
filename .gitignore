@@ -1,2 +1,13 @@
 # Ignore active credentials file
 .env
+
+# Node / build artifacts
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local SQLite state
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

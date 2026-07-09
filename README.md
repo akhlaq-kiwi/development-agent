@@ -1,62 +1,88 @@
-# Antigravity Git-Issue Builder Automation
+# Builder
 
-This workspace contains an automated development runner suite built as a collection of modular shell scripts. The runner fetches open GitHub issues (starting with the oldest first), tracks their state by moving markdown files through a `requirements/` directory lifecycle, invokes the Antigravity agent (`agy`) to implement changes, commits and pushes, creates a Pull Request, and runs deployment procedures.
+Multi-provider, multi-agent issue-to-PR automation. Fetches open work items (GitHub, Jira, or Azure DevOps),
+runs a coding agent (Claude or Antigravity) against each one, self-heals on verification failures,
+opens a PR (or merges directly), and optionally deploys — with a CLI, a local dashboard, and a VSCode
+extension all watching the same run.
 
-## Directory Structure
+## Monorepo layout
 
 ```text
-├── builder/
-│   ├── main_agent.sh    # Core orchestrator script
-│   ├── fetch_issues.sh  # Fetches oldest-first open issues from GitHub
-│   ├── run_agent.sh     # Invokes the agy CLI on issue content
-│   ├── git_manager.sh   # Manages Git branches, PRs, and label removals
-│   ├── deploy.sh        # Runs post-implementation builds and deployments
-│   ├── .env.example     # Environment variables configuration template
-│   ├── .env             # Active environment credentials (created from template)
-│   └── README.md        # This documentation file
-└── requirements/        # Created in the target codebase (PROJECT_DIR)
-    ├── open/            # Markdown requirement files for open issues
-    ├── In_progress/     # Issue markdown files currently being processed
-    └── done/            # Completed issue markdown files
+packages/
+  core/         # engine: config, provider adapters, agent adapters, orchestrator, SQLite state store
+  cli/          # `builder` command line tool
+  daemon/       # local HTTP/WS API + dashboard, started on-demand (no persistent service)
+  vscode-ext/   # VSCode extension: work item tree view + run/dashboard commands
+legacy/         # original bash scripts, kept as a behavior reference during the rewrite
 ```
 
-## Prerequisites
+The daemon is **not** a background service — the CLI and the VSCode extension each spawn it on first
+use (checking a lock file at `~/.local/state/builder/daemon.json`) and it stays up until the machine
+restarts or it's killed; there's nothing to install as a launchd/systemd unit.
 
-Ensure the following tools are installed and available on your system path:
-1. **Antigravity CLI** (`agy`): The agent-first development platform command line tool.
-2. **Git**: For version control commands.
-3. **cURL**: For interacting with the GitHub API.
-4. **jq**: A command-line JSON processor (used for parsing API payloads).
+## Setup
+
+```bash
+pnpm install
+pnpm build
+```
+
+This builds `@builder/core`, `@builder/cli`, `@builder/daemon`, and `builder-vscode` in dependency order.
+
+To use the CLI globally:
+
+```bash
+npm link ./packages/cli   # or: pnpm --filter @builder/cli exec npm link
+```
 
 ## Configuration
 
-The scripts use environment variables for authentication and targeting:
+Global defaults live at `~/.config/builder/config.yml` (still a YAML file — it's machine-wide, not
+project state). The project-local override is **not** a file — it lives in the same SQLite database
+the daemon already uses for work items and events (`~/.local/state/builder/state.db`, `project_configs`
+table, keyed by absolute project path), and you edit it through a UI rather than hand-writing YAML:
 
-| Environment Variable | Description | Default | Required |
-| --- | --- | --- | --- |
-| `GITHUB_PAT` | Your GitHub Personal Access Token (requires `repo` scope). | None | **Yes** (Except in Dry-Run) |
-| `GITHUB_REPOSITORY` | Repository path formatted as `owner/repo` (e.g. `octocat/hello-world`). | None | **Yes** (Except in Dry-Run) |
-| `ISSUE_LABEL` | The issue label to watch for and process. | `antigravity` | No |
-| `BASE_BRANCH` | The default development branch. | `main` | No |
-
-## Usage
-
-### 1. Dry Run Verification
-You can test the entire pipeline (including directory generation and requirements file transitions) using the dry-run flag. This uses mock issues and does not query GitHub or execute code changes:
 ```bash
-./builder/main_agent.sh --dry-run
+builder configure   # prints a URL to a config form (starts the daemon if needed)
 ```
 
-### 2. Live Execution
-You can configure environment variables in a `.env` file within the `builder/` directory:
-1. Copy the example configuration template: `cp builder/.env.example builder/.env`
-2. Populate the parameters in `builder/.env`.
-3. Execute the orchestration script:
+Open that URL, or run `Builder: Configure` from the VSCode command palette — both render the same
+form (agent kind/timeout, provider kind + its fields, deploy toggles) and POST to the daemon's
+`/config` endpoint, which validates against `BuilderConfigSchema` before persisting.
+
+Jira and Azure DevOps use the same PAT-based pattern — see `ProviderConfigSchema` in
+`packages/core/src/config/schema.ts` for their required fields (`baseUrl`/`projectKey`/`email` for
+Jira; `organization`/`project` for Azure DevOps). PATs themselves are never stored — only the name of
+the environment variable to read them from.
+
+## CLI
+
 ```bash
-./builder/main_agent.sh
+builder configure            # print the config form URL for the current project
+builder run [--single]       # start processing open work items in the current project
+builder status                # list tracked work items and their state
+builder logs                  # show recent orchestration events
+builder dashboard              # print the dashboard URL (starts the daemon if needed)
 ```
 
-## Customization
+## Dashboard
 
-- **Prompts**: Modify `builder/run_agent.sh` to adjust the instructions given to the agent.
-- **Build/Deployment**: Add your custom build/deployment code (e.g., Docker commands, AWS/GCP CLI deployments) to `builder/deploy.sh`.
+`builder dashboard` prints a `http://127.0.0.1:<port>/?projectDir=...` URL serving a live view of the
+work item queue and a WebSocket-streamed event log, with a "Config" link to the same form the CLI and
+extension use.
+
+## VSCode extension
+
+`packages/vscode-ext` adds a "Builder" activity bar view with the work item queue, plus commands
+`Builder: Run`, `Builder: Refresh Work Items`, `Builder: Open Dashboard`, and `Builder: Configure`
+(opens the config form in an embedded webview). Package it with `vsce` or run it via the Extension
+Development Host (`F5` from `packages/vscode-ext`) once dependencies are built.
+
+## Extending
+
+- **New issue provider**: implement `IssueProvider` in `packages/core/src/providers/`, add its config
+  schema to `ProviderConfigSchema`, and register it in `providers/index.ts`.
+- **New agent**: implement `AgentAdapter` in `packages/core/src/agents/`, register it in `agents/index.ts`.
+- **Verify/deploy commands**: currently shell out to `legacy/verify.sh` / `legacy/deploy.sh` by default;
+  override via `Orchestrator`'s `verifyCommand`/`deployCommand` options once your target project has its
+  own scripts.

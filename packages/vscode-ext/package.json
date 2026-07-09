@@ -1,0 +1,37 @@
+{
+  "name": "builder-vscode",
+  "displayName": "Builder",
+  "description": "Monitor and drive the Builder issue-to-PR automation from VSCode",
+  "version": "0.1.0",
+  "publisher": "builder",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [{ "id": "builder", "title": "Builder", "icon": "$(rocket)" }]
+    },
+    "views": {
+      "builder": [{ "id": "builder.workItems", "name": "Work Items" }]
+    },
+    "commands": [
+      { "command": "builder.run", "title": "Builder: Run" },
+      { "command": "builder.refresh", "title": "Builder: Refresh Work Items" },
+      { "command": "builder.openDashboard", "title": "Builder: Open Dashboard" },
+      { "command": "builder.configure", "title": "Builder: Configure" }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "lint": "true"
+  },
+  "dependencies": {
+    "@builder/daemon": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.5.4"
+  }
+}
