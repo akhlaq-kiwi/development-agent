@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Resolve the repo root: this script lives at
+# <repo>/packaging/macos/Builder.app/Contents/MacOS/Builder
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"
+CLI="$REPO_ROOT/packages/cli/dist/main.js"
+STATE_DIR="$HOME/.local/state/builder"
+CHROME_PROFILE_DIR="$STATE_DIR/chrome-app-profile"
+EDGE_PROFILE_DIR="$STATE_DIR/edge-app-profile"
+
+mkdir -p "$STATE_DIR"
+
+log() { echo "[Builder] $*" >&2; }
+
+die() {
+  osascript -e "display alert \"Builder\" message \"$1\" as critical"
+  exit 1
+}
+
+command -v node >/dev/null 2>&1 || die "Node.js was not found on PATH. Install Node.js and try again."
+[ -f "$CLI" ] || die "Builder CLI is not built. Run: pnpm install && pnpm build (in $REPO_ROOT)"
+
+log "Starting Builder daemon..."
+URL="$(node "$CLI" home)"
+
+if [ -z "$URL" ]; then
+  die "Builder failed to start. Check ~/.local/state/builder for logs."
+fi
+
+log "Opening $URL"
+
+# Open as a chromeless app window (no tabs/toolbar/first-run nags) if Chrome or
+# Edge is available, so it looks and feels like an installed app rather than a
+# browser tab. Falls back to the default browser otherwise. --no-first-run and
+# a pre-created "First Run" marker file suppress the browser's own onboarding
+# screens (default-browser prompt, sign-in nag) inside this dedicated profile.
+if [ -d "/Applications/Google Chrome.app" ]; then
+  mkdir -p "$CHROME_PROFILE_DIR"
+  touch "$CHROME_PROFILE_DIR/First Run"
+  open -na "Google Chrome" --args \
+    --app="$URL" \
+    --user-data-dir="$CHROME_PROFILE_DIR" \
+    --no-first-run \
+    --no-default-browser-check \
+    --disable-fre
+elif [ -d "/Applications/Microsoft Edge.app" ]; then
+  mkdir -p "$EDGE_PROFILE_DIR"
+  touch "$EDGE_PROFILE_DIR/First Run"
+  open -na "Microsoft Edge" --args \
+    --app="$URL" \
+    --user-data-dir="$EDGE_PROFILE_DIR" \
+    --no-first-run \
+    --no-default-browser-check
+else
+  open "$URL"
+fi

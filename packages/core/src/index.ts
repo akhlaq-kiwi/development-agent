@@ -6,3 +6,4 @@ export * from "./providers/index.js";
 export * from "./agents/index.js";
 export * from "./state/store.js";
 export * from "./orchestrator.js";
+export * from "./git-bootstrap.js";

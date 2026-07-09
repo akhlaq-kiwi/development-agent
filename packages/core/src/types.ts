@@ -39,6 +39,7 @@ export interface AgentAdapter {
 
 export interface RunEvent {
   ts: number;
+  workspaceId: string;
   runId: string;
   workItemId: string;
   stage: "fetch" | "agent" | "verify" | "git" | "deploy" | "done" | "error";

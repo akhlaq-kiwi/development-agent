@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { ensureDaemon } from "./daemon-client.js";
+import { resolveWorkspaceId } from "./workspace.js";
 
 interface WorkItemRecord {
   id: string;
@@ -29,7 +30,9 @@ export class WorkItemsProvider implements vscode.TreeDataProvider<WorkItemRecord
   async getChildren(): Promise<WorkItemRecord[]> {
     try {
       const base = await ensureDaemon();
-      const res = await fetch(`${base}/work-items`);
+      const workspaceId = await resolveWorkspaceId(base);
+      if (!workspaceId) return [];
+      const res = await fetch(`${base}/work-items?workspaceId=${encodeURIComponent(workspaceId)}`);
       return (await res.json()) as WorkItemRecord[];
     } catch (err) {
       void vscode.window.showErrorMessage(`Builder: failed to load work items — ${String(err)}`);

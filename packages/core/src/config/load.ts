@@ -42,12 +42,12 @@ function mergeConfig(
 
 /**
  * Resolves the effective config: global (~/.config/builder/config.yml)
- * merged with the project-local override, which lives in the SQLite state
- * store (keyed by projectDir) rather than a .builder.yml file.
+ * merged with the workspace-local override, which lives in the SQLite state
+ * store (keyed by workspaceId) rather than a .builder.yml file.
  */
-export function loadConfig(projectDir: string, store: StateStore): BuilderConfig {
+export function loadConfig(workspaceId: string, store: StateStore): BuilderConfig {
   const global = readYamlIfExists(GLOBAL_CONFIG_PATH);
-  const project = (store.getProjectConfig(projectDir) as Record<string, unknown> | null) ?? {};
+  const project = (store.getProjectConfig(workspaceId) as Record<string, unknown> | null) ?? {};
   const merged = mergeConfig(global, project);
   return BuilderConfigSchema.parse(merged);
 }

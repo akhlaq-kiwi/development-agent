@@ -13,10 +13,9 @@ export class JiraProvider implements IssueProvider {
   readonly kind = "jira" as const;
   private readonly authHeader: string;
 
-  constructor(private readonly config: JiraConfig) {
-    const pat = process.env[config.patEnvVar];
-    if (!pat) throw new Error(`Missing Jira API token: env var ${config.patEnvVar} is not set`);
-    this.authHeader = `Basic ${Buffer.from(`${config.email}:${pat}`).toString("base64")}`;
+  constructor(private readonly config: JiraConfig, token: string) {
+    if (!token) throw new Error("Missing Jira API token — enter it in the config form");
+    this.authHeader = `Basic ${Buffer.from(`${config.email}:${token}`).toString("base64")}`;
   }
 
   private headers() {

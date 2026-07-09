@@ -3,13 +3,17 @@ import { simpleGit, type SimpleGit } from "simple-git";
 import type { AgentAdapter, IssueProvider, RunEvent, WorkItem } from "./types.js";
 import type { BuilderConfig } from "./config/schema.js";
 import { StateStore } from "./state/store.js";
+import { ensureRepoReady } from "./git-bootstrap.js";
 
 export interface OrchestratorOptions {
+  workspaceId: string;
   config: BuilderConfig;
   provider: IssueProvider;
   agent: AgentAdapter;
   store: StateStore;
   projectDir: string;
+  /** Access token for the issue provider — reused here to authenticate an initial git clone. */
+  token?: string;
   /** Shell command that builds/tests the project; non-zero exit = verification failure. Defaults to legacy/verify.sh. */
   verifyCommand?: string;
   /** Shell command that deploys after a successful merge. Defaults to legacy/deploy.sh. */
@@ -32,7 +36,7 @@ function runShell(command: string, cwd: string): Promise<{ code: number; log: st
 
 /** Ports the main_agent.sh loop: fetch -> branch -> agent -> verify (self-heal) -> commit/PR -> deploy. */
 export class Orchestrator {
-  private readonly git: SimpleGit;
+  private git: SimpleGit;
   private readonly runId: string;
 
   constructor(private readonly opts: OrchestratorOptions) {
@@ -41,17 +45,25 @@ export class Orchestrator {
   }
 
   private emit(workItemId: string, stage: RunEvent["stage"], message: string, level: RunEvent["level"] = "info") {
-    const event: RunEvent = { ts: Date.now(), runId: this.runId, workItemId, stage, message, level };
+    const event: RunEvent = {
+      ts: Date.now(),
+      workspaceId: this.opts.workspaceId,
+      runId: this.runId,
+      workItemId,
+      stage,
+      message,
+      level,
+    };
     this.opts.store.appendEvent(event);
     this.opts.onEvent?.(event);
   }
 
   async processOne(item: WorkItem): Promise<boolean> {
-    const { config, provider, agent, store, projectDir } = this.opts;
+    const { config, provider, agent, store, projectDir, workspaceId } = this.opts;
     const baseBranch = config.provider?.kind === "github" ? config.provider.baseBranch : "main";
     const branchName = `issue-${item.id}`;
 
-    store.upsertWorkItem(item, "in_progress", Date.now());
+    store.upsertWorkItem(workspaceId, item, "in_progress", Date.now());
     this.emit(item.id, "git", `Checking out base branch ${baseBranch}`);
     await this.git.checkout(baseBranch);
     await this.git.pull("origin", baseBranch).catch(() => undefined);
@@ -71,7 +83,7 @@ export class Orchestrator {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       this.emit(item.id, "agent", `Invoking ${agent.kind} agent (attempt ${attempt}/${maxRetries})`);
-      const result = await agent.run({ workItem: item, workspaceDir: projectDir, verifyErrors, timeout: config.agent.timeout });
+      const result = await agent.run({ workItem: item, workspaceDir: projectDir, verifyErrors });
       if (!result.success) {
         this.emit(item.id, "agent", `Agent exited with code ${result.exitCode}`, "error");
         break;
@@ -93,7 +105,7 @@ export class Orchestrator {
       this.emit(item.id, "error", `Verification failed after ${maxRetries} attempts`, "error");
       await provider.removeInProgress(item);
       await this.git.checkout(baseBranch);
-      store.upsertWorkItem(item, "failed", Date.now());
+      store.upsertWorkItem(workspaceId, item, "failed", Date.now());
       return false;
     }
 
@@ -103,7 +115,7 @@ export class Orchestrator {
       this.emit(item.id, "git", "No modifications detected; skipping commit/PR", "warn");
       await provider.removeInProgress(item);
       await this.git.checkout(baseBranch);
-      store.upsertWorkItem(item, "failed", Date.now());
+      store.upsertWorkItem(workspaceId, item, "failed", Date.now());
       return false;
     }
 
@@ -128,7 +140,7 @@ export class Orchestrator {
     }
 
     await provider.markDone(item);
-    store.upsertWorkItem(item, "done", Date.now());
+    store.upsertWorkItem(workspaceId, item, "done", Date.now());
 
     if (config.deploy.enabled && this.opts.deployCommand) {
       this.emit(item.id, "deploy", "Running deploy command");
@@ -144,7 +156,34 @@ export class Orchestrator {
   }
 
   async run(): Promise<void> {
-    const items = await this.opts.provider.listOpenWorkItems();
+    this.emit("-", "fetch", `Fetching open work items from ${this.opts.provider.kind}`);
+    let items: WorkItem[];
+    try {
+      items = await this.opts.provider.listOpenWorkItems();
+    } catch (err) {
+      this.emit("-", "fetch", `Failed to fetch work items: ${String(err)}`, "error");
+      throw err;
+    }
+
+    if (items.length === 0) {
+      this.emit("-", "fetch", "No open work items found", "info");
+      return;
+    }
+    this.emit("-", "fetch", `Found ${items.length} work item(s)`);
+
+    this.emit("-", "git", "Checking whether the project repository is initialized...");
+    try {
+      const bootstrap = await ensureRepoReady(this.opts.projectDir, this.opts.config, this.opts.token ?? "");
+      if (bootstrap.action !== "none") {
+        this.emit("-", "git", bootstrap.message);
+        // simple-git caches repo root/config on construction; re-point it now that .git exists.
+        this.git = simpleGit(this.opts.projectDir);
+      }
+    } catch (err) {
+      this.emit("-", "git", `Failed to initialize repository: ${String(err)}`, "error");
+      throw err;
+    }
+
     for (const item of items) {
       const done = await this.processOne(item);
       if (this.opts.singleRun && done) break;

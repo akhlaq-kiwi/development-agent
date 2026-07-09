@@ -2,13 +2,13 @@ import { z } from "zod";
 
 export const AgentConfigSchema = z.object({
   kind: z.enum(["claude", "antigravity"]).default("claude"),
-  timeout: z.string().default("20m"),
 });
 
 export const GitHubProviderConfigSchema = z.object({
   kind: z.literal("github"),
   repository: z.string(), // owner/repo
-  patEnvVar: z.string().default("GITHUB_PAT"),
+  /** Fallback only — the token entered through the config UI (stored in SQLite) takes precedence. */
+  patEnvVar: z.string().optional(),
   issueLabel: z.string().default("antigravity"),
   baseBranch: z.string().default("main"),
 });
@@ -18,7 +18,7 @@ export const JiraProviderConfigSchema = z.object({
   baseUrl: z.string(),
   projectKey: z.string(),
   email: z.string(),
-  patEnvVar: z.string().default("JIRA_PAT"),
+  patEnvVar: z.string().optional(),
   jqlFilter: z.string().optional(),
 });
 
@@ -26,7 +26,7 @@ export const AzureDevOpsProviderConfigSchema = z.object({
   kind: z.literal("azure-devops"),
   organization: z.string(),
   project: z.string(),
-  patEnvVar: z.string().default("AZURE_DEVOPS_PAT"),
+  patEnvVar: z.string().optional(),
   areaPath: z.string().optional(),
 });
 
@@ -41,13 +41,20 @@ export const DeployConfigSchema = z.object({
   createPr: z.boolean().default(true),
 });
 
+export const ScheduleConfigSchema = z.object({
+  /** How long to sleep between polls for new work items, once a run loop is active. */
+  pollIntervalSeconds: z.number().int().positive().default(300),
+});
+
 export const BuilderConfigSchema = z.object({
-  agent: AgentConfigSchema.default({ kind: "claude", timeout: "20m" }),
+  agent: AgentConfigSchema.default({ kind: "claude" }),
   provider: ProviderConfigSchema.optional(),
   deploy: DeployConfigSchema.default({ enabled: false, createPr: true }),
+  schedule: ScheduleConfigSchema.default({ pollIntervalSeconds: 300 }),
   projectDir: z.string().optional(),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
+export type ScheduleConfig = z.infer<typeof ScheduleConfigSchema>;
 export type BuilderConfig = z.infer<typeof BuilderConfigSchema>;

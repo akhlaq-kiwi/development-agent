@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -7,47 +7,26 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 const STATE_DIR = join(homedir(), ".local", "state", "builder");
-const LOCK_FILE = join(STATE_DIR, "daemon.json");
+const DEFAULT_PORT = 47893;
+const PORT = Number(process.env.BUILDER_DAEMON_PORT ?? DEFAULT_PORT);
+const BASE_URL = `http://127.0.0.1:${PORT}`;
 
-interface DaemonLock {
-  pid: number;
-  port: number;
-  startedAt: number;
-}
-
-function readLock(): DaemonLock | null {
-  if (!existsSync(LOCK_FILE)) return null;
+async function pingDaemon(): Promise<boolean> {
   try {
-    return JSON.parse(readFileSync(LOCK_FILE, "utf8")) as DaemonLock;
-  } catch {
-    return null;
-  }
-}
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function pingDaemon(port: number): Promise<boolean> {
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(500) });
+    const res = await fetch(`${BASE_URL}/status`, { signal: AbortSignal.timeout(500) });
     return res.ok;
   } catch {
     return false;
   }
 }
 
-/** Starts the daemon if it isn't already running, then returns its base URL. On-demand only — no persistent service. */
+/**
+ * Starts the daemon if it isn't already running, then returns its base URL. On-demand only —
+ * no persistent service. Uses a fixed port (not a lock file) as the source of truth for whether
+ * a daemon is already running, so a stale/deleted lock file can never cause a duplicate instance.
+ */
 export async function ensureDaemon(): Promise<string> {
-  const lock = readLock();
-  if (lock && isAlive(lock.pid) && (await pingDaemon(lock.port))) {
-    return `http://127.0.0.1:${lock.port}`;
-  }
+  if (await pingDaemon()) return BASE_URL;
 
   mkdirSync(STATE_DIR, { recursive: true });
   const child = spawn(process.execPath, [require.resolve("@builder/daemon/dist/main.js")], {
@@ -58,10 +37,7 @@ export async function ensureDaemon(): Promise<string> {
 
   for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 150));
-    const newLock = readLock();
-    if (newLock && (await pingDaemon(newLock.port))) {
-      return `http://127.0.0.1:${newLock.port}`;
-    }
+    if (await pingDaemon()) return BASE_URL;
   }
   throw new Error("Timed out waiting for builder daemon to start");
 }

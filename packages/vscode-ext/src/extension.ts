@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { ensureDaemon } from "./daemon-client.js";
 import { WorkItemsProvider } from "./workItemsProvider.js";
+import { resolveWorkspaceId } from "./workspace.js";
 
 export function activate(context: vscode.ExtensionContext) {
   const provider = new WorkItemsProvider();
@@ -10,16 +11,16 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("builder.refresh", () => provider.refresh()),
 
     vscode.commands.registerCommand("builder.run", async () => {
-      const projectDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!projectDir) {
+      const base = await ensureDaemon();
+      const workspaceId = await resolveWorkspaceId(base);
+      if (!workspaceId) {
         void vscode.window.showErrorMessage("Builder: open a project folder first");
         return;
       }
-      const base = await ensureDaemon();
       const res = await fetch(`${base}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectDir }),
+        body: JSON.stringify({ workspaceId }),
       });
       if (!res.ok) {
         void vscode.window.showErrorMessage(`Builder: failed to start run — ${await res.text()}`);
@@ -35,13 +36,13 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand("builder.configure", async () => {
-      const projectDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!projectDir) {
+      const base = await ensureDaemon();
+      const workspaceId = await resolveWorkspaceId(base);
+      if (!workspaceId) {
         void vscode.window.showErrorMessage("Builder: open a project folder first");
         return;
       }
-      const base = await ensureDaemon();
-      const url = `${base}/config?projectDir=${encodeURIComponent(projectDir)}`;
+      const url = `${base}/config?workspaceId=${encodeURIComponent(workspaceId)}`;
       const panel = vscode.window.createWebviewPanel("builderConfig", "Builder: Configure", vscode.ViewColumn.One, {
         enableScripts: true,
         retainContextWhenHidden: true,

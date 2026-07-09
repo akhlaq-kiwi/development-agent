@@ -22,10 +22,9 @@ export class AzureDevOpsProvider implements IssueProvider {
   private readonly authHeader: string;
   private readonly apiBase: string;
 
-  constructor(private readonly config: AzureDevOpsConfig) {
-    const pat = process.env[config.patEnvVar];
-    if (!pat) throw new Error(`Missing Azure DevOps PAT: env var ${config.patEnvVar} is not set`);
-    this.authHeader = `Basic ${Buffer.from(`:${pat}`).toString("base64")}`;
+  constructor(private readonly config: AzureDevOpsConfig, token: string) {
+    if (!token) throw new Error("Missing Azure DevOps access token — enter it in the config form");
+    this.authHeader = `Basic ${Buffer.from(`:${token}`).toString("base64")}`;
     this.apiBase = `https://dev.azure.com/${config.organization}/${config.project}/_apis`;
   }
 

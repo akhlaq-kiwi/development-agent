@@ -17,11 +17,10 @@ export class GitHubProvider implements IssueProvider {
   private readonly repo: string;
   private readonly pat: string;
 
-  constructor(private readonly config: GitHubConfig) {
+  constructor(private readonly config: GitHubConfig, token: string) {
     this.repo = config.repository.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
-    const pat = process.env[config.patEnvVar];
-    if (!pat) throw new Error(`Missing GitHub PAT: env var ${config.patEnvVar} is not set`);
-    this.pat = pat;
+    if (!token) throw new Error("Missing GitHub access token — enter it in the config form");
+    this.pat = token;
   }
 
   private headers() {
